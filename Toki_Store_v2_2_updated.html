@@ -992,10 +992,13 @@ function saveStoreSettings(v){ DB.setSettings(v); broadcastTokiSettings(); retur
 // Keep every open Toki Store tab in this browser in sync after admin changes.
 const TOKI_SYNC_CHANNEL = ('BroadcastChannel' in window) ? new BroadcastChannel('toki_store_sync') : null;
 function broadcastTokiSettings(){ try{ TOKI_SYNC_CHANNEL?.postMessage({type:'settings-updated',at:new Date().toISOString()}); }catch(e){} }
-function refreshTokiViews(){
+function refreshTokiViews(options={}){
   if(state.campaign){ const cur=currentCampaigns().find(c=>c.id===state.campaign.id && c.visible); state.campaign = cur || null; }
   renderCampaigns(); renderRewards();
-  if(state.view==='admin')renderAdmin();
+  // Do not rebuild a form while an admin is actively editing it. External data events
+  // still refresh the admin portal; the one-second staff redraw below does not.
+  const adminEditing=state.view==='admin' && $('#admin-page')?.contains(document.activeElement) && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName||'');
+  if(state.view==='admin' && options.includeAdmin!==false && !adminEditing)renderAdmin();
   if(state.view==='myteams' && !isAdmin())renderMyTeams();
   if(state.user && !isAdmin() && !$('#team-select-overlay').hidden)showTeamSelect();
 }
@@ -1668,7 +1671,7 @@ async function restoreAuthSession(){
 }
 
 // Keep every visible card current even when its data was updated by another open tab.
-setInterval(()=>{ try{ refreshTokiViews(); }catch(e){} }, 1000);
+setInterval(()=>{ try{ refreshTokiViews({includeAdmin:false}); }catch(e){} }, 1000);
 
 // Initial render
 renderCampaigns();
