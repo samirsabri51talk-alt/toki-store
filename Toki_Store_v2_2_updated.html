@@ -1667,8 +1667,8 @@ async function restoreAuthSession(){
   state.user={...profile,authToken:auth.access_token,authUserId:auth.user?.id}; enterApp();
 }
 
-// Auto refresh views every 10 seconds (no manual browser refresh needed)
-setInterval(()=>{ try{ refreshTokiViews(); }catch(e){} }, 5000);
+// Keep every visible card current even when its data was updated by another open tab.
+setInterval(()=>{ try{ refreshTokiViews(); }catch(e){} }, 1000);
 
 // Initial render
 renderCampaigns();
