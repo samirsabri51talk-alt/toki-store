@@ -834,6 +834,7 @@ const TokiCloud = {
   ready: false,
   online: false,
   _timer: null,
+  _pulling: false,
   _dirty: new Set(),
   isShared(k){ return TOKI_SHARED_KEYS.indexOf(k) !== -1; },
   /* Blocking first load so the app boots with the shared data already in hand. */
@@ -884,8 +885,11 @@ const TokiCloud = {
     try{ if(typeof refreshTokiViews === 'function') refreshTokiViews(); }catch(e){}
   },
   async pull(){
+    if(this._pulling) return;
+    this._pulling = true;
     try{
-      const res = await fetch(TOKI_REST + '?select=key,value', { headers:{ 'apikey':TOKI_CLOUD_KEY, 'Authorization':'Bearer '+TOKI_CLOUD_KEY } });
+      // A unique URL plus no-store prevents a browser/CDN cache from delaying live updates.
+      const res = await fetch(TOKI_REST + '?select=key,value&_='+Date.now(), { cache:'no-store', headers:{ 'apikey':TOKI_CLOUD_KEY, 'Authorization':'Bearer '+TOKI_CLOUD_KEY, 'Cache-Control':'no-cache' } });
       if(!res.ok) return;
       const rows = await res.json();
       let changed = false;
@@ -894,6 +898,7 @@ const TokiCloud = {
       if(changed){ this._mirror(); try{ if(typeof refreshTokiViews === 'function') refreshTokiViews(); }catch(e){} }
       this._badge();
     }catch(e){ this.online = false; this._badge(); }
+    finally{ this._pulling = false; }
   },
   _badge(){
     const el = document.getElementById('toki-cloud-badge');
@@ -1653,7 +1658,10 @@ async function restoreAuthSession(){
     res=await fetch(TOKI_AUTH_URL+'/auth/v1/token?grant_type=refresh_token',{method:'POST',headers:{apikey:TOKI_AUTH_KEY,'Content-Type':'application/json'},body:JSON.stringify({refresh_token:saved.refreshToken})}).catch(()=>null);
     if(res?.ok){auth=await res.json();DB.setAuthSession({accessToken:auth.access_token,refreshToken:auth.refresh_token,email:auth.user?.email,userId:auth.user?.id});}
   }else if(res?.ok){auth.user=await res.json();}
-  if(!res?.ok){DB.clearAuthSession();return;}
+  // Never discard a valid local session simply because the network was briefly unavailable.
+  // Clear it only after Supabase has responded and confirmed that both tokens are invalid.
+  if(!res)return;
+  if(!res.ok){DB.clearAuthSession();return;}
   const profile=DB.getUsers().find(u=>u.email&&u.email.toLowerCase()===String(auth.user?.email||'').toLowerCase());
   if(!profile){DB.clearAuthSession();return;}
   state.user={...profile,authToken:auth.access_token,authUserId:auth.user?.id}; enterApp();
@@ -1666,6 +1674,7 @@ setInterval(()=>{ try{ refreshTokiViews(); }catch(e){} }, 5000);
 renderCampaigns();
 renderRewards();
 restoreAuthSession();
+window.addEventListener('online', restoreAuthSession);
 </script>
 
 <script type="module">
