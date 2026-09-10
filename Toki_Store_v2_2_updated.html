@@ -826,6 +826,9 @@ SEPTEMBER_STRUCTURE.forEach(([sm,team,floor,leader,pos,count])=>{
 const TOKI_CLOUD_URL = 'https://zwvwfpxchjceruinfvrl.supabase.co';
 const TOKI_CLOUD_KEY = 'sb_publishable_KEL11tna-nhX2ufAcConkw_kuojJYPU';
 const TOKI_REST = TOKI_CLOUD_URL + '/rest/v1/toki_state';
+/* Authentication lives in the visible “toki store” Supabase project. */
+const TOKI_AUTH_URL = 'https://aohtdmuvbocfpqvnttjr.supabase.co';
+const TOKI_AUTH_KEY = 'sb_publishable_OphRWHGe5ingSacUWFX5VQ_jDNgD7Z-';
 const TOKI_SHARED_KEYS = ['toki_users','pk_users','toki_orders','pk_submissions','toki_settings','toki_notifications','toki_accounts_v2','pk_pass_requests'];
 
 const TokiCloud = {
@@ -915,7 +918,8 @@ const TokiLS = {
 };
 
 const DB = {
-  getUsers(){ return JSON.parse(TokiLS.getItem('toki_users')||'[]'); },
+  /* Never expose legacy passwords to the app. Supabase Authentication verifies them. */
+  getUsers(){ return JSON.parse(TokiLS.getItem('toki_users')||'[]').map(({password,...user})=>user); },
   setUsers(u){ TokiLS.setItem('toki_users',JSON.stringify(u)); },
   getSubs(){ return JSON.parse(TokiLS.getItem('toki_orders')||TokiLS.getItem('pk_submissions')||'[]'); },
   setSubs(s){ TokiLS.setItem('toki_orders',JSON.stringify(s)); TokiLS.setItem('pk_submissions',JSON.stringify(s)); },
@@ -1030,31 +1034,41 @@ function rewardHasStock(campaign, reward, quantity, ignoreOrderId){
 }
 
 /* ===== AUTH ===== */
-function attemptLogin(){
+async function attemptLogin(){
   const input = $('#login-user').value.trim();
   const inputLower = input.toLowerCase();
-  const inputPhone = normalizePhone(input);
   const pass = $('#login-pass').value;
+  const button=$('#login-btn');
+  if(!input || !pass){ $('#login-error').textContent='Enter your email and password.'; return; }
+  button.disabled=true; button.textContent='Signing in…';
+  let auth;
+  try{
+    const res=await fetch(TOKI_AUTH_URL+'/auth/v1/token?grant_type=password',{
+      method:'POST',headers:{apikey:TOKI_AUTH_KEY,'Content-Type':'application/json'},
+      body:JSON.stringify({email:input,password:pass})
+    });
+    auth=await res.json();
+    if(!res.ok) throw new Error(auth?.error_description||auth?.msg||'Invalid email or password.');
+  }catch(e){
+    $('#login-error').textContent=e.message||'Unable to sign in.';
+    button.disabled=false; button.textContent='Sign In'; return;
+  }
   const users = DB.getUsers();
-  const found = users.find(u=>{
-    if(u.password!==pass) return false;
-    if(u.email && u.email.toLowerCase()===inputLower) return true;
-    if(inputPhone && u.phone && normalizePhone(u.phone)===inputPhone) return true;
-    // Fallback so existing bookmarked/legacy logins with the old CRM/username still work.
-    if(u.username && u.username.toLowerCase()===inputLower) return true;
-    return false;
-  });
+  const found = users.find(u=>u.email && u.email.toLowerCase()===(auth.user?.email||inputLower).toLowerCase());
   if(!found){
-    $('#login-error').textContent='Invalid email/phone number or password.';
+    $('#login-error').textContent='This authenticated account has not been assigned a Toki Store profile.';
+    button.disabled=false; button.textContent='Sign In';
     return;
   }
-  state.user = found;
-  DB.setSession(found);
+  state.user = {...found,authToken:auth.access_token,authUserId:auth.user?.id};
+  DB.setSession(null);
   $('#login-error').textContent='';
+  button.disabled=false; button.textContent='Sign In';
   enterApp();
 }
 
 function logout(){
+  if(state.user?.authToken) fetch(TOKI_AUTH_URL+'/auth/v1/logout',{method:'POST',headers:{apikey:TOKI_AUTH_KEY,Authorization:'Bearer '+state.user.authToken}}).catch(()=>{});
   state.user = null;
   state.selectedTeam = '';
   DB.clearSession();
@@ -1092,11 +1106,12 @@ function closeForgot(){
 }
 
 function submitForgot(){
+  const err = $('#forgot-error');
+  err.textContent='Password changes are managed securely in Supabase. Please contact a Toki Store administrator.';
+  err.style.color='var(--muted)';
+  return;
   const crm = $('#forgot-crm').value;
   const newPass = $('#forgot-newpass').value.trim();
-  const err = $('#forgot-error');
-  if(!crm){ err.textContent='Please select your email or phone number.'; return; }
-  if(!newPass){ err.textContent='Please enter a new password.'; return; }
   const users = DB.getUsers();
   const user = users.find(u=>u.username===crm);
   if(!user){ err.textContent='Account not found.'; return; }
@@ -1608,11 +1623,7 @@ $('#modal').onclick = e=>{if(e.target.closest('[data-close]'))closeModal();};
 document.onkeydown = e=>{if(e.key==='Escape')closeModal();};
 
 // Auto-login if session exists
-const saved = DB.getSession();
-if(saved){
-  state.user = saved;
-  enterApp();
-}
+DB.clearSession();
 
 // Auto refresh views every 10 seconds (no manual browser refresh needed)
 setInterval(()=>{ try{ TokiCloud.pull(); }catch(e){} try{ refreshTokiViews(); }catch(e){} }, 10000);
