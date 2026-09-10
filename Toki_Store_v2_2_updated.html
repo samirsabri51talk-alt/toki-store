@@ -902,7 +902,8 @@ const TokiCloud = {
     if(el){ el.textContent = this.online ? 'Live · shared database' : 'Offline · local copy'; el.dataset.state = this.online ? 'on' : 'off'; }
   },
   start(){
-    setInterval(()=>this.pull(), 10000);
+    /* Realtime events update immediately; this is the reliable fallback for every open tab. */
+    setInterval(()=>this.pull(), 5000);
     window.addEventListener('online', ()=>this.pull());
     document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) this.pull(); });
     this._badge();
@@ -1626,7 +1627,7 @@ document.onkeydown = e=>{if(e.key==='Escape')closeModal();};
 DB.clearSession();
 
 // Auto refresh views every 10 seconds (no manual browser refresh needed)
-setInterval(()=>{ try{ TokiCloud.pull(); }catch(e){} try{ refreshTokiViews(); }catch(e){} }, 10000);
+setInterval(()=>{ try{ refreshTokiViews(); }catch(e){} }, 5000);
 
 // Initial render
 renderCampaigns();
