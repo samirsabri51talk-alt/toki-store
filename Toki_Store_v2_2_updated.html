@@ -900,8 +900,8 @@ const TokiCloud = {
     if(el){ el.textContent = this.online ? 'Live · shared database' : 'Offline · local copy'; el.dataset.state = this.online ? 'on' : 'off'; }
   },
   start(){
-    /* Realtime events update immediately; this is the reliable fallback for every open tab. */
-    setInterval(()=>this.pull(), 5000);
+    /* Realtime events update immediately; this one-second fallback keeps every open tab current. */
+    setInterval(()=>this.pull(), 1000);
     window.addEventListener('online', ()=>this.pull());
     document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) this.pull(); });
     this._badge();
