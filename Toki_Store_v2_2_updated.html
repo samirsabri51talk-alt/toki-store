@@ -927,6 +927,9 @@ const DB = {
   getSession(){ return JSON.parse(TokiLS.getItem('toki_session')||TokiLS.getItem('pk_session')||'null'); },
   setSession(s){ TokiLS.setItem('toki_session',JSON.stringify(s)); TokiLS.setItem('pk_session',JSON.stringify(s)); },
   clearSession(){ TokiLS.removeItem('toki_session'); TokiLS.removeItem('pk_session'); },
+  getAuthSession(){ try{return JSON.parse(localStorage.getItem('toki_auth_session')||'null');}catch(e){return null;} },
+  setAuthSession(s){ localStorage.setItem('toki_auth_session',JSON.stringify(s)); },
+  clearAuthSession(){ localStorage.removeItem('toki_auth_session'); },
   getSettings(){
     const teamPoints={}; Object.values(SM_TEAMS).flat().forEach(g=>{teamPoints[g.team]=1000;});
     const config=structuredClone(APP_CONFIG),defaults={teamPoints,teamPointMeta:{},campaigns:config.campaigns,notifications:{}};
@@ -991,6 +994,7 @@ function refreshTokiViews(){
   renderCampaigns(); renderRewards();
   if(state.view==='admin')renderAdmin();
   if(state.view==='myteams' && !isAdmin())renderMyTeams();
+  if(state.user && !isAdmin() && !$('#team-select-overlay').hidden)showTeamSelect();
 }
 window.addEventListener('storage',e=>{
   if(e.key==='toki_settings' || e.key==='toki_orders' || e.key==='toki_notifications') refreshTokiViews();
@@ -1062,6 +1066,7 @@ async function attemptLogin(){
     return;
   }
   state.user = {...found,authToken:auth.access_token,authUserId:auth.user?.id};
+  DB.setAuthSession({accessToken:auth.access_token,refreshToken:auth.refresh_token,email:auth.user?.email,userId:auth.user?.id});
   DB.setSession(null);
   $('#login-error').textContent='';
   button.disabled=false; button.textContent='Sign In';
@@ -1073,6 +1078,7 @@ function logout(){
   state.user = null;
   state.selectedTeam = '';
   DB.clearSession();
+  DB.clearAuthSession();
   $('#login-page').style.display='grid';
   $('#app-shell').classList.remove('active');
   $('#login-user').value='';
@@ -1090,12 +1096,16 @@ function enterApp(){
   // Sessions can outlive a role update. Always reload this account from the
   // shared user record before choosing the available navigation.
   const currentAccount=DB.getUsers().find(u=>u.username===state.user?.username || (u.email&&u.email.toLowerCase()===String(state.user?.email||'').toLowerCase()));
-  if(currentAccount){ state.user=currentAccount; DB.setSession(currentAccount); }
+  if(currentAccount){ state.user={...currentAccount,authToken:state.user.authToken,authUserId:state.user.authUserId}; }
   $('#login-page').style.display='none'; $('#app-shell').classList.add('active');
   $('#user-name').textContent=state.user.name; $('#user-avatar').textContent=state.user.name.charAt(0).toUpperCase();
   buildNav(); updateTeamBadge();
   if(isAdmin()) switchView('admin');
-  else if(userTeams(state.user).length) showTeamSelect();
+  else if(userTeams(state.user).length){
+    const remembered=localStorage.getItem('selTeam_'+state.user.username);
+    if(remembered && userTeams(state.user).includes(remembered)){state.selectedTeam=remembered;switchView('myteams');}
+    else showTeamSelect();
+  }
   else switchView('rewards');
 }
 function closeForgot(){
@@ -1623,8 +1633,21 @@ $('#clear-notifications-btn').onclick = clearAllNotifications;
 $('#modal').onclick = e=>{if(e.target.closest('[data-close]'))closeModal();};
 document.onkeydown = e=>{if(e.key==='Escape')closeModal();};
 
-// Auto-login if session exists
+// Restore the Supabase Auth session after a normal browser refresh.
 DB.clearSession();
+async function restoreAuthSession(){
+  const saved=DB.getAuthSession(); if(!saved?.accessToken)return;
+  let auth={access_token:saved.accessToken,user:{id:saved.userId,email:saved.email}};
+  let res=await fetch(TOKI_AUTH_URL+'/auth/v1/user',{headers:{apikey:TOKI_AUTH_KEY,Authorization:'Bearer '+saved.accessToken}}).catch(()=>null);
+  if(!res?.ok && saved.refreshToken){
+    res=await fetch(TOKI_AUTH_URL+'/auth/v1/token?grant_type=refresh_token',{method:'POST',headers:{apikey:TOKI_AUTH_KEY,'Content-Type':'application/json'},body:JSON.stringify({refresh_token:saved.refreshToken})}).catch(()=>null);
+    if(res?.ok){auth=await res.json();DB.setAuthSession({accessToken:auth.access_token,refreshToken:auth.refresh_token,email:auth.user?.email,userId:auth.user?.id});}
+  }else if(res?.ok){auth.user=await res.json();}
+  if(!res?.ok){DB.clearAuthSession();return;}
+  const profile=DB.getUsers().find(u=>u.email&&u.email.toLowerCase()===String(auth.user?.email||'').toLowerCase());
+  if(!profile){DB.clearAuthSession();return;}
+  state.user={...profile,authToken:auth.access_token,authUserId:auth.user?.id}; enterApp();
+}
 
 // Auto refresh views every 10 seconds (no manual browser refresh needed)
 setInterval(()=>{ try{ refreshTokiViews(); }catch(e){} }, 5000);
@@ -1632,6 +1655,7 @@ setInterval(()=>{ try{ refreshTokiViews(); }catch(e){} }, 5000);
 // Initial render
 renderCampaigns();
 renderRewards();
+restoreAuthSession();
 </script>
 
 <script type="module">
