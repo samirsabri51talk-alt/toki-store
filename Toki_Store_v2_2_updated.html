@@ -1072,6 +1072,10 @@ function logout(){
 function isAdmin(){ return state.user?.role==='admin'; }
 function userTeams(user){ return Array.isArray(user?.teams) ? user.teams.filter(Boolean) : (user?.team ? [user.team] : []); }
 function enterApp(){
+  // Sessions can outlive a role update. Always reload this account from the
+  // shared user record before choosing the available navigation.
+  const currentAccount=DB.getUsers().find(u=>u.username===state.user?.username || (u.email&&u.email.toLowerCase()===String(state.user?.email||'').toLowerCase()));
+  if(currentAccount){ state.user=currentAccount; DB.setSession(currentAccount); }
   $('#login-page').style.display='none'; $('#app-shell').classList.add('active');
   $('#user-name').textContent=state.user.name; $('#user-avatar').textContent=state.user.name.charAt(0).toUpperCase();
   buildNav(); updateTeamBadge();
