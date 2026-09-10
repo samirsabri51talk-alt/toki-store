@@ -1022,7 +1022,14 @@ const statusClass = (st)=>st==='Live'?'status-approved':(st==='Scheduled'?'statu
 function allKnownTeams(){
   const map=new Map(); Object.entries(SM_TEAMS).forEach(([sm,groups])=>groups.forEach(g=>map.set(g.team,sm))); return [...map.entries()].map(([team,sm])=>({team,sm}));
 }
-function getTeamPoints(team){ return Number(getStoreSettings().teamPoints?.[team]||0); }
+function teamKey(team){ return String(team||'').trim().replace(/\s+/g,' ').toLowerCase(); }
+function canonicalTeamName(team){ return allKnownTeams().find(t=>teamKey(t.team)===teamKey(team))?.team||String(team||'').trim(); }
+function getTeamPoints(team){
+  const points=getStoreSettings().teamPoints||{}, exact=canonicalTeamName(team);
+  if(Object.prototype.hasOwnProperty.call(points,exact))return Number(points[exact]||0);
+  const matchingKey=Object.keys(points).find(key=>teamKey(key)===teamKey(exact));
+  return Number(matchingKey ? points[matchingKey] : 0);
+}
 function notifySM(sm, data){
   const n=DB.getNotifications(); n.unshift({id:'N-'+Date.now()+'-'+Math.random().toString(36).slice(2,7),sm,...data,read:false,timestamp:new Date().toISOString()}); DB.setNotifications(n);
 }
@@ -1389,9 +1396,14 @@ function posClass(p){
 }
 
 function renderMyTeams(){
-  const host=$('#myteams-content'), chosen=state.selectedTeam, group=Object.values(SM_TEAMS).flat().find(g=>g.team===chosen); if(!group){host.innerHTML='<div class="empty">Select a team to continue.</div>';return;}
-  const bal=getTeamPoints(group.team), pending=DB.getSubs().filter(o=>o.teamName===group.team&&o.status==='Pending').reduce((s,o)=>s+Number(o.points||0),0), available=Math.max(0,bal-pending); const rows=group.members.map(m=>'<tr><td>'+esc(m.code)+'</td><td>'+esc(m.leader)+'</td><td><span class="pos-pill '+posClass(m.pos)+'">'+esc(m.pos)+'</span></td><td>'+m.n+'</td></tr>').join('');
-  host.innerHTML='<div class="mt-group"><div class="mt-group-head"><h3>'+esc(group.team)+'</h3><span class="mt-floor">'+esc(group.floor)+' · ★ '+bal.toLocaleString()+' pts · '+available.toLocaleString()+' available</span></div><table class="mt-table"><thead><tr><th>Team</th><th>Leader</th><th>Position</th><th>Members</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  const host=$('#myteams-content'), chosen=canonicalTeamName(state.selectedTeam), group=Object.values(SM_TEAMS).flat().find(g=>teamKey(g.team)===teamKey(chosen));
+  if(!group){host.innerHTML='<div class="empty">Select a team to continue.</div>';return;}
+  state.selectedTeam=group.team;
+  const bal=getTeamPoints(group.team), pending=DB.getSubs().filter(o=>teamKey(o.teamName)===teamKey(group.team)&&o.status==='Pending').reduce((s,o)=>s+Number(o.points||0),0), available=Math.max(0,bal-pending), teamLabel='Team: '+group.team;
+  const balance=$('#sm-team-balance'); if(balance)balance.textContent='★ '+available.toLocaleString()+' Points';
+  const notificationHost=$('#sm-notifications'); if(notificationHost){const notes=DB.getNotifications().filter(n=>teamKey(n.teamName)===teamKey(group.team)).slice(0,5);notificationHost.innerHTML='<p class="section-note" style="margin:0 0 8px"><strong>'+esc(teamLabel)+'</strong></p>'+(notes.length?notes.map(n=>'<div class="notice '+(!n.read?'unread':'')+'"><div class="notice-head"><strong class="notice-title">'+esc(n.title||'Team update')+'</strong><span class="notice-meta">'+esc(fmtDateTime(n.timestamp||Date.now()))+'</span></div><p class="notice-body">'+esc(n.message||'')+'</p></div>').join(''):'<p class="section-note"><strong>'+esc(teamLabel)+'</strong> · No notifications yet.</p>');}
+  const rows=group.members.map(m=>'<tr><td>'+esc(group.team)+'</td><td>'+esc(m.leader)+'</td><td><span class="pos-pill '+posClass(m.pos)+'">'+esc(m.pos)+'</span></td><td>'+m.n+'</td></tr>').join('');
+  host.innerHTML='<div class="mt-group"><div class="mt-group-head"><h3>'+esc(group.team)+'</h3><span class="mt-floor">'+esc(group.floor)+' · ★ '+bal.toLocaleString()+' assigned · '+available.toLocaleString()+' available</span></div><table class="mt-table"><thead><tr><th>Team</th><th>Leader</th><th>Position</th><th>Members</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
 function renderAdmin(){
   const subs=DB.getSubs(); renderAdminStats(subs); renderAdminTable(subs); populateAdminFilters(subs); renderTeamPointsEditor(); renderPKEditor(); renderOrdersTable(); renderPasswordRequests();
