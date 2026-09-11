@@ -1040,6 +1040,15 @@ function getTeamPoints(team){
 function notifySM(sm, data){
   const n=DB.getNotifications(); n.unshift({id:'N-'+Date.now()+'-'+Math.random().toString(36).slice(2,7),sm,...data,read:false,timestamp:new Date().toISOString()}); DB.setNotifications(n);
 }
+function deleteStaffNotification(id){
+  const chosen=canonicalTeamName(state.selectedTeam), notes=DB.getNotifications();
+  const note=notes.find(n=>n.id===id);
+  // Staff can only remove messages that belong to the team currently selected in their portal.
+  if(!note || teamKey(note.teamName)!==teamKey(chosen)) return;
+  if(!confirm('Delete this notification?')) return;
+  DB.setNotifications(notes.filter(n=>n.id!==id));
+  renderMyTeams();
+}
 function teamHasEnoughPoints(team, points, ignoreOrderId){
   const base=getTeamPoints(team); const orders=DB.getSubs().filter(o=>o.teamName===team && o.status==='Pending' && o.id!==ignoreOrderId).reduce((a,o)=>a+Number(o.points||0),0); return base-orders>=Number(points||0);
 }
@@ -1409,7 +1418,7 @@ function renderMyTeams(){
   state.selectedTeam=group.team;
   const bal=getTeamPoints(group.team), pending=DB.getSubs().filter(o=>teamKey(o.teamName)===teamKey(group.team)&&o.status==='Pending').reduce((s,o)=>s+Number(o.points||0),0), available=Math.max(0,bal-pending), teamLabel='Team: '+group.team;
   const balance=$('#sm-team-balance'); if(balance)balance.textContent='★ '+available.toLocaleString()+' Points';
-  const notificationHost=$('#sm-notifications'); if(notificationHost){const notes=DB.getNotifications().filter(n=>teamKey(n.teamName)===teamKey(group.team)).slice(0,5);notificationHost.innerHTML='<p class="section-note" style="margin:0 0 8px"><strong>'+esc(teamLabel)+'</strong></p>'+(notes.length?notes.map(n=>'<div class="notice '+(!n.read?'unread':'')+'"><div class="notice-head"><strong class="notice-title">'+esc(n.title||'Team update')+'</strong><span class="notice-meta">'+esc(fmtDateTime(n.timestamp||Date.now()))+'</span></div><p class="notice-body">'+esc(n.message||'')+'</p></div>').join(''):'<p class="section-note"><strong>'+esc(teamLabel)+'</strong> · No notifications yet.</p>');}
+  const notificationHost=$('#sm-notifications'); if(notificationHost){const notes=DB.getNotifications().filter(n=>teamKey(n.teamName)===teamKey(group.team)).slice(0,5);notificationHost.innerHTML='<p class="section-note" style="margin:0 0 8px"><strong>'+esc(teamLabel)+'</strong></p>'+(notes.length?notes.map(n=>'<div class="notice '+(!n.read?'unread':'')+'"><div class="notice-head"><strong class="notice-title">'+esc(n.title||'Team update')+'</strong><span class="notice-meta">'+esc(fmtDateTime(n.timestamp||Date.now()))+'</span></div><p class="notice-body">'+esc(n.message||'')+'</p><div class="inline-actions" style="margin-top:10px"><button type="button" class="tiny-btn danger" data-delete-staff-notification="'+esc(n.id)+'">Delete</button></div></div>').join(''):'<p class="section-note"><strong>'+esc(teamLabel)+'</strong> · No notifications yet.</p>'); notificationHost.querySelectorAll('[data-delete-staff-notification]').forEach(btn=>btn.onclick=()=>deleteStaffNotification(btn.dataset.deleteStaffNotification));}
   const rows=group.members.map(m=>'<tr><td>'+esc(group.team)+'</td><td>'+esc(m.leader)+'</td><td><span class="pos-pill '+posClass(m.pos)+'">'+esc(m.pos)+'</span></td><td>'+m.n+'</td></tr>').join('');
   host.innerHTML='<div class="mt-group"><div class="mt-group-head"><h3>'+esc(group.team)+'</h3><span class="mt-floor">'+esc(group.floor)+' · ★ '+bal.toLocaleString()+' assigned · '+available.toLocaleString()+' available</span></div><table class="mt-table"><thead><tr><th>Team</th><th>Leader</th><th>Position</th><th>Members</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
