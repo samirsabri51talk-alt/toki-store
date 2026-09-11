@@ -446,10 +446,11 @@
         <div class="team-points-admin-head">
           <div>
             <h2>Team Point Balances</h2>
-            <p class="section-note">Admin controls the points for every team. The saved balance is reflected in the selected team’s SM portal and used for reward-purchase validation.</p>
+            <p class="section-note">Each PK has a completely separate team-points balance. Points in one PK cannot be used in another PK.</p>
           </div>
           <div class="team-points-toolbar">
             <input id="team-points-search" type="search" placeholder="Search team or SM…">
+            <select id="team-points-pk-filter" aria-label="Select PK"></select>
             <select id="team-points-sm-filter"><option value="">All SMs</option></select>
             <button class="tiny-btn" id="refresh-team-points">Refresh</button>
             <button class="button" id="save-team-points">Save Team Points</button>
@@ -942,9 +943,9 @@ const DB = {
   clearAuthSession(){ localStorage.removeItem('toki_auth_session'); },
   getSettings(){
     const teamPoints={}; Object.values(SM_TEAMS).flat().forEach(g=>{teamPoints[g.team]=1000;});
-    const config=structuredClone(APP_CONFIG),defaults={teamPoints,teamPointMeta:{},campaigns:config.campaigns,notifications:{}};
+    const config=structuredClone(APP_CONFIG),defaults={teamPoints,teamPointMeta:{},teamPointsByPk:{},teamPointMetaByPk:{},campaigns:config.campaigns,notifications:{}};
     const raw=TokiLS.getItem('toki_settings');
-    if(raw){try{const saved=JSON.parse(raw)||{};const merged={...defaults,...saved};merged.teamPoints={...teamPoints,...(saved.teamPoints||{})};merged.teamPointMeta={...(saved.teamPointMeta||{})};merged.campaigns=Array.isArray(saved.campaigns)?saved.campaigns:config.campaigns;merged.campaigns=merged.campaigns.map(c=>({...c,rewards:Array.isArray(c.rewards)?c.rewards:[]}));return merged;}catch(e){console.warn('Invalid toki_settings; rebuilding defaults.',e);}}
+    if(raw){try{const saved=JSON.parse(raw)||{};const merged={...defaults,...saved};merged.teamPoints={...teamPoints,...(saved.teamPoints||{})};merged.teamPointMeta={...(saved.teamPointMeta||{})};merged.teamPointsByPk=(saved.teamPointsByPk&&typeof saved.teamPointsByPk==='object')?saved.teamPointsByPk:{};merged.teamPointMetaByPk=(saved.teamPointMetaByPk&&typeof saved.teamPointMetaByPk==='object')?saved.teamPointMetaByPk:{};merged.campaigns=Array.isArray(saved.campaigns)?saved.campaigns:config.campaigns;merged.campaigns=merged.campaigns.map(c=>({...c,rewards:Array.isArray(c.rewards)?c.rewards:[]}));return merged;}catch(e){console.warn('Invalid toki_settings; rebuilding defaults.',e);}}
     TokiLS.setItem('toki_settings',JSON.stringify(defaults));return defaults;
   },
   setSettings(v){ TokiLS.setItem('toki_settings',JSON.stringify(v)); },
@@ -1037,8 +1038,9 @@ function allKnownTeams(){
 }
 function teamKey(team){ return String(team||'').trim().replace(/\s+/g,' ').toLowerCase(); }
 function canonicalTeamName(team){ return allKnownTeams().find(t=>teamKey(t.team)===teamKey(team))?.team||String(team||'').trim(); }
-function getTeamPoints(team){
-  const points=getStoreSettings().teamPoints||{}, exact=canonicalTeamName(team);
+function pointsPKId(){ return state.campaign?.id || getStoreSettings().campaigns?.find(pkIsLive)?.id || getStoreSettings().campaigns?.[0]?.id || ''; }
+function getTeamPoints(team,pkId=pointsPKId()){
+  const points=getStoreSettings().teamPointsByPk?.[pkId]||{}, exact=canonicalTeamName(team);
   if(Object.prototype.hasOwnProperty.call(points,exact))return Number(points[exact]||0);
   const matchingKey=Object.keys(points).find(key=>teamKey(key)===teamKey(exact));
   return Number(matchingKey ? points[matchingKey] : 0);
@@ -1055,8 +1057,8 @@ function deleteStaffNotification(id){
   DB.setNotifications(notes.filter(n=>n.id!==id));
   renderMyTeams();
 }
-function teamHasEnoughPoints(team, points, ignoreOrderId){
-  const base=getTeamPoints(team); const orders=DB.getSubs().filter(o=>o.teamName===team && o.status==='Pending' && o.id!==ignoreOrderId).reduce((a,o)=>a+Number(o.points||0),0); return base-orders>=Number(points||0);
+function teamHasEnoughPoints(team, points, pkId=pointsPKId(), ignoreOrderId){
+  const base=getTeamPoints(team,pkId); const orders=DB.getSubs().filter(o=>o.pkId===pkId&&teamKey(o.teamName)===teamKey(team) && o.status==='Pending' && o.id!==ignoreOrderId).reduce((a,o)=>a+Number(o.points||0),0); return base-orders>=Number(points||0);
 }
 function pendingRewardQuantity(campaignId, rewardId, ignoreOrderId){
   return DB.getSubs().filter(o=>o.pkId===campaignId && o.rewardId===rewardId && o.status==='Pending' && o.id!==ignoreOrderId).reduce((sum,o)=>sum+Math.max(1,Number(o.quantity||1)),0);
@@ -1366,7 +1368,7 @@ function openForm(reward){
     if(type==='meal'&&(!restaurant||!foodItem||!Number.isFinite(mealPrice)||mealPrice<1)){ $('#form-error').textContent='Choose the restaurant, food item, and a valid EGP price.'; return; }
     if(type==='tshirt'&&(!size||!shirtHasStock(state.campaign,reward,size,quantity))){ $('#form-error').textContent='That T-Shirt size is out of stock. Please select another size.'; return; }
     const totalPoints=mealPrice*quantity;
-    if(!teamHasEnoughPoints(team, totalPoints)){
+    if(!teamHasEnoughPoints(team, totalPoints, state.campaign.id)){
       $('#form-error').textContent = 'This team does not have enough available points for '+quantity+' item'+(quantity===1?'':'s')+'. Please reduce the quantity or choose another reward.';
       return;
     }
@@ -1411,7 +1413,7 @@ function submitReward(){
   state.submitting=true;
   const btn=$('#confirm'); btn.disabled=true; btn.textContent='Submitting...';
   const c=state.campaign, r=state.reward, team=state.form.teamName, now=new Date();
-  if(!teamHasEnoughPoints(team,state.form.totalPoints)){
+  if(!teamHasEnoughPoints(team,state.form.totalPoints,c.id)){
     $('#submit-error').textContent='This team no longer has enough available points. Please reopen the reward and try again.';
     btn.disabled=false; btn.textContent='Place purchase request'; state.submitting=false; return;
   }
@@ -1443,7 +1445,7 @@ function renderMyTeams(){
   const host=$('#myteams-content'), chosen=canonicalTeamName(state.selectedTeam), group=Object.values(SM_TEAMS).flat().find(g=>teamKey(g.team)===teamKey(chosen));
   if(!group){host.innerHTML='<div class="empty">Select a team to continue.</div>';return;}
   state.selectedTeam=group.team;
-  const bal=getTeamPoints(group.team), pending=DB.getSubs().filter(o=>teamKey(o.teamName)===teamKey(group.team)&&o.status==='Pending').reduce((s,o)=>s+Number(o.points||0),0), available=Math.max(0,bal-pending), teamLabel='Team: '+group.team;
+  const pkId=pointsPKId(), bal=getTeamPoints(group.team,pkId), pending=DB.getSubs().filter(o=>o.pkId===pkId&&teamKey(o.teamName)===teamKey(group.team)&&o.status==='Pending').reduce((s,o)=>s+Number(o.points||0),0), available=Math.max(0,bal-pending), teamLabel='Team: '+group.team;
   const balance=$('#sm-team-balance'); if(balance)balance.textContent='★ '+available.toLocaleString()+' Points';
   const notificationHost=$('#sm-notifications'); if(notificationHost){const notes=DB.getNotifications().filter(n=>teamKey(n.teamName)===teamKey(group.team)).slice(0,5);notificationHost.innerHTML='<p class="section-note" style="margin:0 0 8px"><strong>'+esc(teamLabel)+'</strong></p>'+(notes.length?notes.map(n=>'<div class="notice '+(!n.read?'unread':'')+'"><div class="notice-head"><strong class="notice-title">'+esc(n.title||'Team update')+'</strong><span class="notice-meta">'+esc(fmtDateTime(n.timestamp||Date.now()))+'</span></div><p class="notice-body">'+esc(n.message||'')+'</p><div class="inline-actions" style="margin-top:10px"><button type="button" class="tiny-btn danger" data-delete-staff-notification="'+esc(n.id)+'">Delete</button></div></div>').join(''):'<p class="section-note"><strong>'+esc(teamLabel)+'</strong> · No notifications yet.</p>'); notificationHost.querySelectorAll('[data-delete-staff-notification]').forEach(btn=>btn.onclick=()=>deleteStaffNotification(btn.dataset.deleteStaffNotification));}
   const rows=group.members.map(m=>'<tr><td>'+esc(group.team)+'</td><td>'+esc(m.leader)+'</td><td><span class="pos-pill '+posClass(m.pos)+'">'+esc(m.pos)+'</span></td><td>'+m.n+'</td></tr>').join('');
@@ -1496,12 +1498,12 @@ function deleteOrder(id){
 }
 function approveOrder(id){
   const subs=DB.getSubs(),o=subs.find(x=>x.id===id); if(!o||o.status!=='Pending')return;
-  if(!teamHasEnoughPoints(o.teamName,o.points,id)){alert('This team no longer has enough points to approve this order. Adjust the team balance first.');return;}
+  if(!teamHasEnoughPoints(o.teamName,o.points,o.pkId,id)){alert('This team no longer has enough points in this PK to approve this order. Adjust this PK’s team balance first.');return;}
   const settings=getStoreSettings(),campaign=settings.campaigns.find(c=>c.id===o.pkId),reward=campaign?.rewards?.find(r=>r.id===o.rewardId);
   const quantity=Math.max(1,Number(o.quantity||1));
   if(reward && !rewardHasStock(campaign,reward,quantity,id)){alert('This quantity is no longer available in stock. Decline the order or update the reward stock first.');return;}
   if(reward&&rewardType(reward)==='tshirt'&&!shirtHasStock(campaign,reward,o.size,quantity,id)){alert('The selected T-Shirt size is no longer available. Update the size stock or decline the order.');return;}
-  settings.teamPoints[o.teamName]=Math.max(0,Number(settings.teamPoints[o.teamName]||0)-Number(o.points||0));
+  settings.teamPointsByPk=settings.teamPointsByPk||{};settings.teamPointsByPk[o.pkId]=settings.teamPointsByPk[o.pkId]||{};settings.teamPointsByPk[o.pkId][o.teamName]=Math.max(0,Number(settings.teamPointsByPk[o.pkId][o.teamName]||0)-Number(o.points||0));
   if(reward&&rewardType(reward)==='tshirt'){reward.sizeStock=reward.sizeStock||{};reward.sizeStock[o.size]=Math.max(0,shirtStock(reward,o.size)-quantity);} else if(reward && rewardHasLimitedStock(reward)){reward.stock=Math.max(0,Number(reward.stock)-quantity);}
   saveStoreSettings(settings); o.status='Approved'; o.approvedAt=new Date().toISOString(); DB.setSubs(subs);
   notifySM(o.smName,{title:'Purchase approved',teamName:o.teamName,message:'Your Toki Store purchase '+o.id+' for '+quantity+' × '+o.rewardName+' has been approved. '+o.points+' points were deducted from '+o.teamName+'.'}); renderAdmin();
@@ -1519,7 +1521,7 @@ function setOrderPending(id){
   if(!confirm('Move this purchase back to Pending? Approved orders will have their points and stock refunded.'))return;
   if(o.status==='Approved'){
     const settings=getStoreSettings();
-    settings.teamPoints[o.teamName]=Math.max(0,Number(settings.teamPoints[o.teamName]||0)+Number(o.points||0));
+    settings.teamPointsByPk=settings.teamPointsByPk||{};settings.teamPointsByPk[o.pkId]=settings.teamPointsByPk[o.pkId]||{};settings.teamPointsByPk[o.pkId][o.teamName]=Math.max(0,Number(settings.teamPointsByPk[o.pkId][o.teamName]||0)+Number(o.points||0));
     const campaign=settings.campaigns.find(c=>c.id===o.pkId),reward=campaign?.rewards?.find(r=>r.id===o.rewardId);
     if(reward&&rewardType(reward)==='tshirt'){reward.sizeStock=reward.sizeStock||{};reward.sizeStock[o.size]=shirtStock(reward,o.size)+Math.max(1,Number(o.quantity||1));} else if(reward&&rewardHasLimitedStock(reward))reward.stock=Math.max(0,Number(reward.stock)+Math.max(1,Number(o.quantity||1)));
     saveStoreSettings(settings);
@@ -1549,7 +1551,9 @@ function renderOrdersTable(){
 }
 function renderTeamPointsEditor(){
   const settings=getStoreSettings(), teams=allKnownTeams(), tbody=$('#team-points-body'), empty=$('#team-points-empty');
-  const search=$('#team-points-search')?.value.trim().toLowerCase()||'', smFilter=$('#team-points-sm-filter')?.value||'';
+  const pkSelect=$('#team-points-pk-filter');
+  if(pkSelect){const previous=pkSelect.value;pkSelect.innerHTML=(settings.campaigns||[]).map(c=>'<option value="'+esc(c.id)+'">'+esc(c.name||'Untitled PK')+'</option>').join('');pkSelect.value=settings.campaigns.some(c=>c.id===previous)?previous:(settings.campaigns?.find(pkIsLive)?.id||settings.campaigns?.[0]?.id||'');}
+  const pkId=pkSelect?.value||'', campaign=settings.campaigns?.find(c=>c.id===pkId), search=$('#team-points-search')?.value.trim().toLowerCase()||'', smFilter=$('#team-points-sm-filter')?.value||'';
   const sms=[...new Set(teams.map(x=>x.sm))].sort();
   const smSelect=$('#team-points-sm-filter');
   if(smSelect){
@@ -1560,43 +1564,44 @@ function renderTeamPointsEditor(){
   const filtered=teams.filter(x=>(!search||(x.team+' '+x.sm).toLowerCase().includes(search))&&(!smFilter||x.sm===smFilter));
   empty.hidden=filtered.length>0;
 
-  const pendingByTeam={};
-  DB.getSubs().filter(o=>o.status==='Pending').forEach(o=>{pendingByTeam[o.teamName]=(pendingByTeam[o.teamName]||0)+Number(o.points||0);});
+  const points=settings.teamPointsByPk?.[pkId]||{}, meta=settings.teamPointMetaByPk?.[pkId]||{}, pendingByTeam={};
+  DB.getSubs().filter(o=>o.pkId===pkId&&o.status==='Pending').forEach(o=>{pendingByTeam[o.teamName]=(pendingByTeam[o.teamName]||0)+Number(o.points||0);});
 
-  const totalAssigned=teams.reduce((s,x)=>s+Number(settings.teamPoints?.[x.team]||0),0);
+  const totalAssigned=teams.reduce((s,x)=>s+Number(points[x.team]||0),0);
   const totalPending=teams.reduce((s,x)=>s+(pendingByTeam[x.team]||0),0);
   const summary=$('#team-points-summary');
-  if(summary) summary.innerHTML='<span class="tp-stat">Teams<strong>'+teams.length+'</strong></span><span class="tp-stat">Assigned Points<strong>'+totalAssigned.toLocaleString()+'</strong></span><span class="tp-stat">Pending Reserved<strong>'+totalPending.toLocaleString()+'</strong></span><span class="tp-stat">Available Across Teams<strong>'+Math.max(0,totalAssigned-totalPending).toLocaleString()+'</strong></span>';
+  if(summary) summary.innerHTML='<span class="tp-stat">PK<strong>'+esc(campaign?.name||'Select a PK')+'</strong></span><span class="tp-stat">Teams<strong>'+teams.length+'</strong></span><span class="tp-stat">Assigned Points<strong>'+totalAssigned.toLocaleString()+'</strong></span><span class="tp-stat">Pending Reserved<strong>'+totalPending.toLocaleString()+'</strong></span><span class="tp-stat">Available in this PK<strong>'+Math.max(0,totalAssigned-totalPending).toLocaleString()+'</strong></span>';
 
   tbody.innerHTML=filtered.map(x=>{
     const g=(SM_TEAMS[x.sm]||[]).find(z=>z.team===x.team);
     const members=g?g.members.reduce((s,m)=>s+m.n,0):0;
     const floor=g?.floor||'—';
-    const current=Number(settings.teamPoints?.[x.team]||0);
+    const current=Number(points[x.team]||0);
     const pending=Number(pendingByTeam[x.team]||0);
     const available=Math.max(0,current-pending);
-    const updated=settings.teamPointMeta?.[x.team];
+    const updated=meta[x.team];
     return '<tr><td>'+esc(x.team)+'</td><td>'+esc(x.sm)+'</td><td>'+esc(floor)+'</td><td>'+members+'</td><td><span class="balance-chip">★ '+current.toLocaleString()+'</span>'+(updated?.at?'<div class="tp-updated">Updated '+esc(fmtDateTime(updated.at))+'</div>':'')+'</td><td><span class="tp-reserved">'+pending.toLocaleString()+'</span></td><td><span class="tp-available">'+available.toLocaleString()+'</span></td><td><input class="points-input" type="number" min="0" step="1" data-team-points="'+esc(x.team)+'" value="'+current+'"></td></tr>';
   }).join('');
 
   $('#refresh-team-points').onclick=()=>renderTeamPointsEditor();
   $('#team-points-search').oninput=()=>renderTeamPointsEditor();
   $('#team-points-sm-filter').onchange=()=>renderTeamPointsEditor();
+  if(pkSelect)pkSelect.onchange=()=>renderTeamPointsEditor();
 
   $('#save-team-points').onclick=()=>{
+    if(!pkId){alert('Create or select a PK before setting team points.');return;}
     const changed=[];
     teams.forEach(x=>{
       const el=document.querySelector('[data-team-points="'+CSS.escape(x.team)+'"]');
       if(!el)return;
-      const next=Math.max(0,Number(el.value||0)), prev=Number(settings.teamPoints?.[x.team]||0);
+      const next=Math.max(0,Number(el.value||0)), prev=Number(points[x.team]||0);
       if(next!==prev)changed.push({team:x.team,sm:x.sm,prev,next});
-      settings.teamPoints[x.team]=next;
-      settings.teamPointMeta=settings.teamPointMeta||{};
-      settings.teamPointMeta[x.team]={at:new Date().toISOString(),by:state.user?.name||'admin'};
+      settings.teamPointsByPk=settings.teamPointsByPk||{};settings.teamPointsByPk[pkId]=settings.teamPointsByPk[pkId]||{};settings.teamPointsByPk[pkId][x.team]=next;
+      settings.teamPointMetaByPk=settings.teamPointMetaByPk||{};settings.teamPointMetaByPk[pkId]=settings.teamPointMetaByPk[pkId]||{};settings.teamPointMetaByPk[pkId][x.team]={at:new Date().toISOString(),by:state.user?.name||'admin'};
     });
     saveStoreSettings(settings);
-    changed.forEach(c=>notifySM(c.sm,{title:'Team points updated',teamName:c.team,message:'Admin updated '+c.team+' from '+c.prev.toLocaleString()+' to '+c.next.toLocaleString()+' points. Your portal now shows the new balance.'}));
-    $('#team-points-message').textContent=changed.length?changed.length+' team balance(s) saved and pushed to all open Toki Store tabs in this browser.':'No point changes to save.';
+    changed.forEach(c=>notifySM(c.sm,{title:'Team points updated',teamName:c.team,message:'Admin updated '+c.team+' in '+(campaign?.name||'this PK')+' from '+c.prev.toLocaleString()+' to '+c.next.toLocaleString()+' points.'}));
+    $('#team-points-message').textContent=changed.length?changed.length+' team balance(s) saved for '+(campaign?.name||'this PK')+'.':'No point changes to save.';
     $('#team-points-message').className='success-text';
     renderAdmin();
   };
