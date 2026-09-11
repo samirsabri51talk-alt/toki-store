@@ -889,8 +889,9 @@ const TokiCloud = {
     if(this._pulling) return;
     this._pulling = true;
     try{
-      // A unique URL plus no-store prevents a browser/CDN cache from delaying live updates.
-      const res = await fetch(TOKI_REST + '?select=key,value&_='+Date.now(), { cache:'no-store', headers:{ 'apikey':TOKI_CLOUD_KEY, 'Authorization':'Bearer '+TOKI_CLOUD_KEY, 'Cache-Control':'no-cache' } });
+      // `cache: no-store` forces a network request. Avoid arbitrary query parameters here:
+      // PostgREST treats unknown parameters as filters and rejects the request.
+      const res = await fetch(TOKI_REST + '?select=key,value', { cache:'no-store', headers:{ 'apikey':TOKI_CLOUD_KEY, 'Authorization':'Bearer '+TOKI_CLOUD_KEY, 'Cache-Control':'no-cache' } });
       if(!res.ok) return;
       const rows = await res.json();
       let changed = false;
