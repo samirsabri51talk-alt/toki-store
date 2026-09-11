@@ -1425,7 +1425,9 @@ async function refreshApp(){
     await TokiCloud.pull();
     refreshTokiViews();
   }finally{
-    if(btn){btn.disabled=false;btn.textContent='↻ Refresh';}
+    // Reload with a unique URL so GitHub Pages and the browser cannot reuse a stale HTML copy.
+    const url=new URL(window.location.href); url.searchParams.set('refresh',Date.now().toString());
+    window.location.replace(url.toString());
   }
 }
 function renderAdmin(){
