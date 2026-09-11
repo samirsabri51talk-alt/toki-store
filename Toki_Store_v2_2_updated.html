@@ -340,6 +340,7 @@
         <div class="user-avatar" id="user-avatar">U</div>
         <span id="user-name">User</span>
       </div>
+      <button class="logout-btn" id="refresh-btn" type="button" title="Refresh live data">↻ Refresh</button>
       <button class="logout-btn" id="logout-btn">Logout</button>
     </div>
   </header>
@@ -1411,6 +1412,21 @@ function renderMyTeams(){
   const rows=group.members.map(m=>'<tr><td>'+esc(group.team)+'</td><td>'+esc(m.leader)+'</td><td><span class="pos-pill '+posClass(m.pos)+'">'+esc(m.pos)+'</span></td><td>'+m.n+'</td></tr>').join('');
   host.innerHTML='<div class="mt-group"><div class="mt-group-head"><h3>'+esc(group.team)+'</h3><span class="mt-floor">'+esc(group.floor)+' · ★ '+bal.toLocaleString()+' assigned · '+available.toLocaleString()+' available</span></div><table class="mt-table"><thead><tr><th>Team</th><th>Leader</th><th>Position</th><th>Members</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
+
+function confirmLogout(){
+  if(confirm('Are you sure you want to log out of Toki Store?')) logout();
+}
+
+async function refreshApp(){
+  const btn=$('#refresh-btn');
+  if(btn){btn.disabled=true;btn.textContent='↻ Refreshing…';}
+  try{
+    await TokiCloud.pull();
+    refreshTokiViews();
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='↻ Refresh';}
+  }
+}
 function renderAdmin(){
   const subs=DB.getSubs(); renderAdminStats(subs); renderAdminTable(subs); populateAdminFilters(subs); renderTeamPointsEditor(); renderPKEditor(); renderOrdersTable(); renderPasswordRequests();
 }
@@ -1635,8 +1651,9 @@ $('#login-btn').onclick = attemptLogin;
   $('#forgot-newpass').onkeydown = (e)=>{if(e.key==='Enter')submitForgot();};
   $('#pwd-toggle').onclick = ()=>{const p=$('#login-pass'),e=$('#eye-icon'),o=$('#eye-off-icon');const vis=p.type==='password';p.type=vis?'text':'password';e.style.display=vis?'none':'block';o.style.display=vis?'block':'none';};
 $('#login-pass').onkeydown = e=>{if(e.key==='Enter')attemptLogin();};
-$('#logout-btn').onclick = logout;
-  $('#back-login-btn').onclick = logout;
+$('#logout-btn').onclick = confirmLogout;
+  $('#back-login-btn').onclick = confirmLogout;
+$('#refresh-btn').onclick = refreshApp;
 $('#search').oninput = applyFilters;
 $('#category').onchange = applyFilters;
 $('#sort').onchange = applyFilters;
